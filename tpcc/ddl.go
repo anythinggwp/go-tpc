@@ -3,6 +3,7 @@ package tpcc
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 const (
@@ -52,6 +53,15 @@ func (w *ddlManager) createForeignKeyDDL(ctx context.Context, query string, inde
 	fmt.Printf("creating foreign key %s\n", indexName)
 	if _, err := s.Conn.ExecContext(ctx, query); err != nil {
 		return err
+	}
+	return nil
+}
+
+func (w *ddlManager) createCitusDDL(ctx context.Context, query string, action string) error {
+	s := getTPCCState(ctx)
+	fmt.Println(action)
+	if _, err := s.Conn.ExecContext(ctx, query); err != nil {
+		return fmt.Errorf("%s failed: %w", action, err)
 	}
 	return nil
 }
@@ -687,6 +697,169 @@ alter table stock add constraint s_item_fkey
 
 		}
 
+	}
+
+	return nil
+}
+
+func (w *ddlManager) createCitusTables(ctx context.Context) error {
+	if err := w.createCitusDDL(ctx, "CREATE EXTENSION IF NOT EXISTS citus", "creating citus extension"); err != nil {
+		return err
+	}
+	if err := w.checkCitusWorkers(ctx); err != nil {
+		return err
+	}
+
+	referenceTables := []string{tableItem}
+	for _, table := range referenceTables {
+		query := fmt.Sprintf(`
+SELECT create_reference_table('%[1]s')
+WHERE NOT EXISTS (
+	SELECT 1 FROM pg_dist_partition WHERE logicalrelid = '%[1]s'::regclass
+)`, table)
+		if err := w.createCitusDDL(ctx, query, fmt.Sprintf("creating citus reference table %s", table)); err != nil {
+			return err
+		}
+	}
+
+	distributedTables := []struct {
+		table        string
+		column       string
+		colocateWith string
+	}{
+		{table: tableWareHouse, column: "w_id"},
+		{table: tableDistrict, column: "d_w_id", colocateWith: tableWareHouse},
+		{table: tableCustomer, column: "c_w_id", colocateWith: tableWareHouse},
+		{table: tableHistory, column: "h_w_id", colocateWith: tableWareHouse},
+		{table: tableNewOrder, column: "no_w_id", colocateWith: tableWareHouse},
+		{table: tableOrders, column: "o_w_id", colocateWith: tableWareHouse},
+		{table: tableOrderLine, column: "ol_w_id", colocateWith: tableWareHouse},
+		{table: tableStock, column: "s_w_id", colocateWith: tableWareHouse},
+	}
+	for _, dist := range distributedTables {
+		createFn := fmt.Sprintf("create_distributed_table('%s', '%s')", dist.table, dist.column)
+		if dist.colocateWith != "" {
+			createFn = fmt.Sprintf("create_distributed_table('%s', '%s', colocate_with => '%s')", dist.table, dist.column, dist.colocateWith)
+		}
+		query := fmt.Sprintf(`
+SELECT %s
+WHERE NOT EXISTS (
+	SELECT 1 FROM pg_dist_partition WHERE logicalrelid = '%s'::regclass
+)`, createFn, dist.table)
+		if err := w.createCitusDDL(ctx, query, fmt.Sprintf("creating citus distributed table %s", dist.table)); err != nil {
+			return err
+		}
+	}
+
+	citusTables := []string{
+		tableItem,
+		tableWareHouse,
+		tableDistrict,
+		tableCustomer,
+		tableHistory,
+		tableNewOrder,
+		tableOrders,
+		tableOrderLine,
+		tableStock,
+	}
+	if err := w.checkCitusTables(ctx, citusTables); err != nil {
+		return err
+	}
+	return w.printCitusShardPlacements(ctx, citusTables)
+}
+
+func (w *ddlManager) checkCitusWorkers(ctx context.Context) error {
+	s := getTPCCState(ctx)
+
+	var workerCount int
+	if err := s.Conn.QueryRowContext(ctx, "SELECT count(*) FROM citus_get_active_worker_nodes()").Scan(&workerCount); err != nil {
+		return fmt.Errorf("checking citus worker nodes failed: %w", err)
+	}
+	if workerCount == 0 {
+		return fmt.Errorf("citus has no active worker nodes; add workers with citus_add_node before running prepare --citus")
+	}
+	fmt.Printf("citus active worker nodes: %d\n", workerCount)
+	return nil
+}
+
+func (w *ddlManager) checkCitusTables(ctx context.Context, tables []string) error {
+	s := getTPCCState(ctx)
+	regclasses := make([]string, 0, len(tables))
+	for _, table := range tables {
+		regclasses = append(regclasses, fmt.Sprintf("'%s'::regclass", table))
+	}
+
+	rows, err := s.Conn.QueryContext(ctx, fmt.Sprintf(`
+SELECT c.relname
+FROM pg_dist_partition p
+JOIN pg_class c ON c.oid = p.logicalrelid
+WHERE p.logicalrelid IN (%s)`, strings.Join(regclasses, ",")))
+	if err != nil {
+		return fmt.Errorf("checking citus distributed tables failed: %w", err)
+	}
+	defer rows.Close()
+
+	distributed := make(map[string]bool, len(tables))
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			return fmt.Errorf("checking citus distributed tables failed: %w", err)
+		}
+		distributed[table] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("checking citus distributed tables failed: %w", err)
+	}
+
+	missing := make([]string, 0)
+	for _, table := range tables {
+		if !distributed[table] {
+			missing = append(missing, table)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("citus did not register tables as distributed/reference: %s", strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+func (w *ddlManager) printCitusShardPlacements(ctx context.Context, tables []string) error {
+	s := getTPCCState(ctx)
+	regclasses := make([]string, 0, len(tables))
+	for _, table := range tables {
+		regclasses = append(regclasses, fmt.Sprintf("'%s'::regclass", table))
+	}
+
+	rows, err := s.Conn.QueryContext(ctx, fmt.Sprintf(`
+SELECT n.nodename, n.nodeport, count(*) AS placements
+FROM pg_dist_shard s
+JOIN pg_dist_placement p ON p.shardid = s.shardid
+JOIN pg_dist_node n ON n.groupid = p.groupid
+WHERE s.logicalrelid IN (%s)
+GROUP BY n.nodename, n.nodeport
+ORDER BY n.nodename, n.nodeport`, strings.Join(regclasses, ",")))
+	if err != nil {
+		return fmt.Errorf("checking citus shard placements failed: %w", err)
+	}
+	defer rows.Close()
+
+	totalPlacements := 0
+	for rows.Next() {
+		var nodeName string
+		var nodePort int
+		var placements int
+		if err := rows.Scan(&nodeName, &nodePort, &placements); err != nil {
+			return fmt.Errorf("checking citus shard placements failed: %w", err)
+		}
+		totalPlacements += placements
+		fmt.Printf("citus shard placements on %s:%d: %d\n", nodeName, nodePort, placements)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("checking citus shard placements failed: %w", err)
+	}
+	if totalPlacements == 0 {
+		return fmt.Errorf("citus did not create shard placements for tpcc tables")
 	}
 
 	return nil

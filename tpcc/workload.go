@@ -91,6 +91,9 @@ type Config struct {
 
 	// automatic connection refresh interval to balance traffic across new replicas
 	ConnRefreshInterval time.Duration
+
+	// create Citus distributed/reference tables during postgres prepare
+	EnableCitus bool
 }
 
 // Workloader is TPCC workload
@@ -217,6 +220,14 @@ func (w *Workloader) Prepare(ctx context.Context, threadID int) error {
 		if threadID == 0 {
 			if err := w.ddlManager.createTables(ctx, w.cfg.Driver); err != nil {
 				return err
+			}
+			if w.cfg.EnableCitus {
+				if w.cfg.Driver != "postgres" {
+					return fmt.Errorf("citus prepare is only supported with postgres driver")
+				}
+				if err := w.ddlManager.createCitusTables(ctx); err != nil {
+					return err
+				}
 			}
 		}
 		w.createTableWg.Done()

@@ -53,6 +53,9 @@ type Config struct {
 
 	// output style
 	OutputStyle string
+
+	// create Citus distributed/reference tables during postgres prepare
+	EnableCitus bool
 }
 
 type tpchState struct {
@@ -123,6 +126,14 @@ func (w *Workloader) Prepare(ctx context.Context, threadID int) error {
 	}
 	if err := w.createTables(ctx); err != nil {
 		return err
+	}
+	if w.cfg.EnableCitus {
+		if w.cfg.Driver != "postgres" {
+			return fmt.Errorf("citus prepare is only supported with postgres driver")
+		}
+		if err := w.createCitusTables(ctx); err != nil {
+			return err
+		}
 	}
 	var sqlLoader map[dbgen.Table]dbgen.Loader
 	if w.cfg.OutputType == "csv" {

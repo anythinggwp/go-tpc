@@ -27,6 +27,15 @@ func (w *Workloader) createTableDDL(ctx context.Context, query string, tableName
 	return nil
 }
 
+func (w *Workloader) createCitusDDL(ctx context.Context, query string, action string) error {
+	s := w.getState(ctx)
+	fmt.Println(action)
+	if _, err := s.Conn.ExecContext(ctx, query); err != nil {
+		return err
+	}
+	return nil
+}
+
 // createTables creates tables schema.
 func (w *Workloader) createTables(ctx context.Context) error {
 	query := `
@@ -155,6 +164,53 @@ CREATE TABLE IF NOT EXISTS supplier (
 	if err := w.createTableDDL(ctx, query, "lineitem", "creating"); err != nil {
 		return err
 	}
+	return nil
+}
+
+func (w *Workloader) createCitusTables(ctx context.Context) error {
+	if err := w.createCitusDDL(ctx, "CREATE EXTENSION IF NOT EXISTS citus", "creating citus extension"); err != nil {
+		return err
+	}
+
+	referenceTables := []string{"nation", "region"}
+	for _, table := range referenceTables {
+		query := fmt.Sprintf(`
+SELECT create_reference_table('%[1]s')
+WHERE NOT EXISTS (
+	SELECT 1 FROM pg_dist_partition WHERE logicalrelid = '%[1]s'::regclass
+)`, table)
+		if err := w.createCitusDDL(ctx, query, fmt.Sprintf("creating citus reference table %s", table)); err != nil {
+			return err
+		}
+	}
+
+	distributedTables := []struct {
+		table        string
+		column       string
+		colocateWith string
+	}{
+		{table: "orders", column: "o_orderkey"},
+		{table: "lineitem", column: "l_orderkey", colocateWith: "orders"},
+		{table: "customer", column: "c_custkey"},
+		{table: "part", column: "p_partkey"},
+		{table: "partsupp", column: "ps_partkey", colocateWith: "part"},
+		{table: "supplier", column: "s_suppkey"},
+	}
+	for _, dist := range distributedTables {
+		createFn := fmt.Sprintf("create_distributed_table('%s', '%s')", dist.table, dist.column)
+		if dist.colocateWith != "" {
+			createFn = fmt.Sprintf("create_distributed_table('%s', '%s', colocate_with => '%s')", dist.table, dist.column, dist.colocateWith)
+		}
+		query := fmt.Sprintf(`
+SELECT %s
+WHERE NOT EXISTS (
+	SELECT 1 FROM pg_dist_partition WHERE logicalrelid = '%s'::regclass
+)`, createFn, dist.table)
+		if err := w.createCitusDDL(ctx, query, fmt.Sprintf("creating citus distributed table %s", dist.table)); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 

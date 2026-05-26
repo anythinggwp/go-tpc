@@ -44,6 +44,9 @@ type Config struct {
 
 	// output style
 	OutputStyle string
+
+	// create Citus distributed/reference tables during postgres prepare
+	EnableCitus bool
 }
 
 type chState struct {
@@ -116,6 +119,14 @@ func (w *Workloader) Prepare(ctx context.Context, threadID int) error {
 
 	if err := w.createTables(ctx); err != nil {
 		return err
+	}
+	if w.cfg.EnableCitus {
+		if w.cfg.Driver != "postgres" {
+			return fmt.Errorf("citus prepare is only supported with postgres driver")
+		}
+		if err := w.createCitusTables(ctx); err != nil {
+			return err
+		}
 	}
 	sqlLoader := map[dbgen.Table]dbgen.Loader{
 		dbgen.TSupp:   tpch.NewSuppLoader(ctx, w.db, 1),

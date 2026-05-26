@@ -129,8 +129,15 @@ func (s *SQLSink) Flush(ctx context.Context) error {
 		}
 		if i < s.retryCount {
 			fmt.Printf("exec statement error: %v, try again later...\n", err)
-			time.Sleep(s.retryInterval)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(s.retryInterval):
+			}
 		}
+	}
+	if err != nil {
+		return fmt.Errorf("exec statement error after %d retries: %v", s.retryCount, err)
 	}
 
 	s.bufferedRows = 0

@@ -19,6 +19,10 @@ func checkPrepare(ctx context.Context, w workload.Workloader) {
 	if w.Name() == "tpcc" && tpccConfig.NoCheck {
 		return
 	}
+	if w.Name() == "tpcc" && tpccConfig.EnableCitus {
+		fmt.Println("Skip preparing checking for Citus because TPCC consistency checks use joins unsupported by Citus distributed tables.")
+		return
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(threads)

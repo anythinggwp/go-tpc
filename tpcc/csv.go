@@ -121,6 +121,14 @@ func (c *CSVWorkLoader) Prepare(ctx context.Context, threadID int) error {
 			if err := c.ddlManager.createTables(ctx, c.cfg.Driver); err != nil {
 				return err
 			}
+			if c.cfg.EnableCitus {
+				if c.cfg.Driver != "postgres" {
+					return fmt.Errorf("citus prepare is only supported with postgres driver")
+				}
+				if err := c.ddlManager.createCitusTables(ctx); err != nil {
+					return err
+				}
+			}
 		}
 		c.createTableWg.Done()
 		c.createTableWg.Wait()

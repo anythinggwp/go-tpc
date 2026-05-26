@@ -48,6 +48,10 @@ func registerCHBenchmark(root *cobra.Command) {
 		"tiflash-replica",
 		0,
 		"Number of tiflash replica")
+	cmdPrepare.PersistentFlags().BoolVar(&chConfig.EnableCitus,
+		"citus",
+		false,
+		"Create Citus distributed tables when preparing PostgreSQL")
 
 	cmdPrepare.PersistentFlags().BoolVar(&chConfig.AnalyzeTable.Enable,
 		"analyze",

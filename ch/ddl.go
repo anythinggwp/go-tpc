@@ -21,6 +21,15 @@ func (w *Workloader) createTableDDL(ctx context.Context, query string, tableName
 	return nil
 }
 
+func (w *Workloader) createCitusDDL(ctx context.Context, query string, action string) error {
+	s := w.getState(ctx)
+	fmt.Println(action)
+	if _, err := s.Conn.ExecContext(ctx, query); err != nil {
+		return err
+	}
+	return nil
+}
+
 // createTables creates tables schema.
 func (w *Workloader) createTables(ctx context.Context) error {
 	query := `
@@ -59,6 +68,35 @@ CREATE TABLE IF NOT EXISTS supplier (
     PRIMARY KEY (S_SUPPKEY)
 )`
 	if err := w.createTableDDL(ctx, query, "supplier", "creating"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (w *Workloader) createCitusTables(ctx context.Context) error {
+	if err := w.createCitusDDL(ctx, "CREATE EXTENSION IF NOT EXISTS citus", "creating citus extension"); err != nil {
+		return err
+	}
+
+	referenceTables := []string{"nation", "region"}
+	for _, table := range referenceTables {
+		query := fmt.Sprintf(`
+SELECT create_reference_table('%[1]s')
+WHERE NOT EXISTS (
+	SELECT 1 FROM pg_dist_partition WHERE logicalrelid = '%[1]s'::regclass
+)`, table)
+		if err := w.createCitusDDL(ctx, query, fmt.Sprintf("creating citus reference table %s", table)); err != nil {
+			return err
+		}
+	}
+
+	query := `
+SELECT create_distributed_table('supplier', 's_suppkey')
+WHERE NOT EXISTS (
+	SELECT 1 FROM pg_dist_partition WHERE logicalrelid = 'supplier'::regclass
+)`
+	if err := w.createCitusDDL(ctx, query, "creating citus distributed table supplier"); err != nil {
 		return err
 	}
 

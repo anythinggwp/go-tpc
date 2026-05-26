@@ -135,6 +135,10 @@ func registerTpch(root *cobra.Command) {
 		"tiflash-replica",
 		0,
 		"Number of tiflash replica")
+	cmdPrepare.PersistentFlags().BoolVar(&tpchConfig.EnableCitus,
+		"citus",
+		false,
+		"Create Citus distributed tables when preparing PostgreSQL")
 
 	cmdPrepare.PersistentFlags().BoolVar(&tpchConfig.AnalyzeTable.Enable,
 		"analyze",

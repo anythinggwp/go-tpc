@@ -70,6 +70,9 @@ For example:
 
 ```
 ./bin/go-tpc tpcc prepare -d postgres -U myuser -p '12345678' -D test -H 127.0.0.1 -P 5432 --conn-params sslmode=disable
+# Prepare TPCC data on Citus and distribute tables before loading data
+./bin/go-tpc tpcc prepare -d postgres -U myuser -p '12345678' -D test -H 127.0.0.1 -P 5432 --conn-params sslmode=disable --citus
+# Citus prepare skips the built-in TPCC consistency check because it uses joins unsupported by Citus distributed tables
 ```
 
 #### Run
@@ -135,6 +138,8 @@ If you want to import tpcc data into TiDB, please refer to [import-to-tidb](docs
 
 ```
 ./bin/go-tpc tpch prepare -d postgres -U myuser -p '12345678' -D test -H 127.0.0.1 -P 5432 --conn-params sslmode=disable
+# Prepare TPCH data on Citus and distribute tables before loading data
+./bin/go-tpc tpch prepare -d postgres -U myuser -p '12345678' -D test -H 127.0.0.1 -P 5432 --conn-params sslmode=disable --citus
 ```
 
 #### Run
