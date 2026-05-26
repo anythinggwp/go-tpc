@@ -28,31 +28,33 @@ import (
 )
 
 var (
-	dbName         string
-	hosts          []string
-	ports          []int
-	statusPort     int
-	user           string
-	password       string
-	threads        int
-	acThreads      int
-	driver         string
-	totalTime      time.Duration
-	totalCount     int
-	dropData       bool
-	ignoreError    bool
-	outputInterval time.Duration
-	isolationLevel int
-	silence        bool
-	pprofAddr      string
-	metricsAddr    string
-	maxProcs       int
-	connParams     string
-	outputStyle    string
-	targets        []string
-	sslCA          string
-	sslCert        string
-	sslKey         string
+	dbName           string
+	hosts            []string
+	ports            []int
+	statusPort       int
+	user             string
+	password         string
+	threads          int
+	acThreads        int
+	driver           string
+	totalTime        time.Duration
+	totalCount       int
+	dropData         bool
+	ignoreError      bool
+	outputInterval   time.Duration
+	loadRate         int
+	loadRateSchedule string
+	isolationLevel   int
+	silence          bool
+	pprofAddr        string
+	metricsAddr      string
+	maxProcs         int
+	connParams       string
+	outputStyle      string
+	targets          []string
+	sslCA            string
+	sslCert          string
+	sslKey           string
 
 	globalDB  *sql.DB
 	globalCtx context.Context
@@ -223,6 +225,8 @@ func main() {
 	rootCmd.PersistentFlags().BoolVar(&ignoreError, "ignore-error", false, "Ignore error when running workload")
 	rootCmd.PersistentFlags().BoolVar(&silence, "silence", false, "Don't print error when running workload")
 	rootCmd.PersistentFlags().DurationVar(&outputInterval, "interval", 10*time.Second, "Output interval time")
+	rootCmd.PersistentFlags().IntVar(&loadRate, "rate", 0, "Maximum run operations per second across workers, 0 means unlimited")
+	rootCmd.PersistentFlags().StringVar(&loadRateSchedule, "rate-schedule", "", "Override run rate on time intervals, format start-end=rate[,start-end=rate], for example 10s-1m=200,1m-2m=50")
 	rootCmd.PersistentFlags().IntVar(&isolationLevel, "isolation", 0, `Isolation Level 0: Default, 1: ReadUncommitted,
 2: ReadCommitted, 3: WriteCommitted, 4: RepeatableRead,
 5: Snapshot, 6: Serializable, 7: Linerizable`)

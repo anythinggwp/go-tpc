@@ -81,6 +81,8 @@ For example:
 ./bin/go-tpc tpcc --warehouses 4 run -T 4
 # Run TPCC including wait times(keying & thinking time) on every transactions
 ./bin/go-tpc tpcc --warehouses 4 run -T 4 --wait
+# Limit run intensity to 200 operations per second between 10s and 1m, then 50 operations per second between 1m and 2m
+./bin/go-tpc tpcc --warehouses 4 run -T 4 --rate-schedule 10s-1m=200,1m-2m=50
 ```
 
 ##### PostgreSQL & CockroachDB & AlloyDB & Yugabyte

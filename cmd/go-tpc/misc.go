@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -37,7 +38,7 @@ func checkPrepare(ctx context.Context, w workload.Workloader) {
 	wg.Wait()
 }
 
-func execute(timeoutCtx context.Context, w workload.Workloader, action string, threads, index int) error {
+func execute(timeoutCtx context.Context, w workload.Workloader, action string, threads, index int, loadRate *loadRateController) error {
 	count := totalCount / threads
 
 	// For prepare, cleanup and check operations, use background context to avoid timeout constraints
@@ -67,6 +68,16 @@ func execute(timeoutCtx context.Context, w workload.Workloader, action string, t
 
 	// This loop is only reached for "run" action since other actions return earlier
 	for i := 0; i < count || count <= 0; i++ {
+		if loadRate != nil {
+			if err := loadRate.wait(ctx); err != nil {
+				if !silence {
+					fmt.Printf("[%s] %s worker %d stopped while waiting for rate limiter after %d iterations\n",
+						time.Now().Format("2006-01-02 15:04:05"), action, index, i)
+				}
+				return nil
+			}
+		}
+
 		// Check if timeout has occurred before starting next query
 		select {
 		case <-ctx.Done():
@@ -104,6 +115,16 @@ func execute(timeoutCtx context.Context, w workload.Workloader, action string, t
 func executeWorkload(ctx context.Context, w workload.Workloader, threads int, action string) {
 	var wg sync.WaitGroup
 	wg.Add(threads)
+
+	var loadRateController *loadRateController
+	if action == "run" {
+		cfg, err := parseLoadRateConfig(loadRate, loadRateSchedule)
+		if err != nil {
+			fmt.Printf("invalid load rate configuration: %v\n", err)
+			os.Exit(1)
+		}
+		loadRateController = newLoadRateController(cfg)
+	}
 
 	outputCtx, outputCancel := context.WithCancel(ctx)
 	ch := make(chan struct{}, 1)
@@ -173,7 +194,7 @@ func executeWorkload(ctx context.Context, w workload.Workloader, threads int, ac
 	for i := 0; i < threads; i++ {
 		go func(index int) {
 			defer wg.Done()
-			if err := execute(ctx, w, action, threads, index); err != nil {
+			if err := execute(ctx, w, action, threads, index, loadRateController); err != nil {
 				if action == "prepare" {
 					panic(fmt.Sprintf("a fatal occurred when preparing data: %v", err))
 				}
